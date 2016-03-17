@@ -24,7 +24,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 import controlP5.*;
 
 
-public class BankingHall extends PApplet {
+public class BankingHall extends PApplet implements Runnable {
 		
 	// just to keep Eclipse from displaying a warning:
 	private static final long serialVersionUID = 1L;
@@ -48,6 +48,7 @@ public class BankingHall extends PApplet {
 		
 	private double rawEnergy = 0;
 	private double manEnergy = 0;
+	private double saveRatio=0;
 	
 	public ControlP5 cp5;
 	ControlTimer time;
@@ -58,13 +59,34 @@ public class BankingHall extends PApplet {
 	
 	private final int GREY = color (128,128,128);
 	private final int DARK_GREEN = color(0,100,0);
-	private final int LIGHT_GREEN = color(0,255,0);
+	private final int LIGHT_GREEN = color(0,150,0);
 	private final int DARK_RED = color(155,0,0);
 	private final int LIGHT_RED = color(255,0,0);
 	private final int DARK_BLUE = color(0,0,155);
-	private final int LIGHT_BLUE = color(0,0,255);
 	private final int WHITE = color(255);
 	private final int BLACK = color(0);
+	
+	private final int EER = 12;						// energy efficiency rating for ACs
+	
+	/*Runnable coolCounter = new Runnable() {
+		public void run(){
+			// do something
+			float a = ambientT;
+			distributePopulation();
+		}
+	};
+	
+	Runnable coolLobby = new Runnable() {
+		public void run(){
+			// do something
+		}
+	};
+	
+	Runnable coolCSP = new Runnable() {
+		public void run(){
+			// do something
+		}
+	};*/
 	
 	public void setup()
 	{
@@ -147,8 +169,8 @@ public class BankingHall extends PApplet {
 		   .setPosition(105,570)
 	       .setSize(90,35)
 	       .setColorBackground(DARK_BLUE)
-	       .setDecimalPrecision(0)
-	       .setLabel(" PWR - RAW")
+	       .setDecimalPrecision(2)
+	       .setLabel("ENERGY-RAW")
 	       .setLock(true)
 	       ;
 	    
@@ -157,22 +179,21 @@ public class BankingHall extends PApplet {
 		   .setPosition(205,570)
 	       .setSize(90,35)
 	       .setColorBackground(DARK_BLUE)
-	       .setDecimalPrecision(0)
-	       .setLabel(" PWR - MAN")
+	       .setDecimalPrecision(2)
+	       .setLabel("ENERGY-MAN")
 	       .setLock(true)
 	       ;
 	    
-	    // add the current event indicator
-	    cp5.addTextfield("event")
+	 // add energy savings ratio
+	    cp5.addNumberbox("saveRatio")
 		   .setPosition(305,570)
 	       .setSize(90,35)
 	       .setColorBackground(DARK_BLUE)
-	       .setDecimalPrecision(0)
-	       .setLabel("CURR EVENT")
-	       .setFont(textFont)
+	       .setDecimalPrecision(2)
+	       .setLabel("   MAN : RAW")
 	       .setLock(true)
 	       ;
-	 
+
 	// Add labels
 	    cp5.addTextlabel("lblDim")
 		   .setPosition(405,570)
@@ -463,12 +484,13 @@ public class BankingHall extends PApplet {
     	//if it has changed
     	if (time.hour() < 8) {
     		int hour = time.hour();
-    		if (hour > 0) changePopAndTemp(hour);
+    		changePopAndTemp(hour);
+    		
+    		
     		
     	}
-    	// run Cooling 'Daemon'
-    	controlAC.checkCooling();
     	
+    	  	
     	// Update all bound fields depending on start...
     	//1. update the Space temperatures
     	cp5.get(Numberbox.class, "ambientTemp").setValue(ambientT);
@@ -480,13 +502,24 @@ public class BankingHall extends PApplet {
     	//2. update the Energy data
     	cp5.get(Numberbox.class, "rawEnergy").setValue((float) rawEnergy);
     	cp5.get(Numberbox.class, "manEnergy").setValue((float) manEnergy);
+    	if (rawEnergy != 0) saveRatio = manEnergy/rawEnergy;
+		cp5.get(Numberbox.class, "saveRatio").setValue((float) saveRatio);
+		
+		// Update rawEnergy continuously
+		double totalBTU = counter.getMainAC().getCapacityBTU()+ counter.getBackupAC().getCapacityBTU()+
+				lobby.getMainAC().getCapacityBTU()+ lobby.getBackupAC().getCapacityBTU() +
+				customerSP.getMainAC().getCapacityBTU()+ customerSP.getBackupAC().getCapacityBTU();
+		
+		double totalKW = totalBTU/(EER*1000);
+				// float speed = cp5.get(RadioButton.class, "simSpeed").getValue();
+				// double elapsedTime = time.time()* (3600/speed);
+				// println("Elapsed in millisec:" + elapsedTime);
+		
+		rawEnergy = (time.hour()+1) * totalKW;               // time goes from 0 to 7 :)
     	   	
     		
     }
-	// Update all bound fields not dependent on start
-	cp5.get(Textfield.class, "event").setText(event);
-	
-	
+		
 	
 	// load the images
 	image (images[0], 225, 1);
@@ -503,7 +536,7 @@ public class BankingHall extends PApplet {
 	    rect (0,550,400,75);
 	    textSize(15);
 	    fill(BLACK);
-	    text("SIMULATION STATUS", 127, 565);
+	    text("SIMULATION RESULTS (ALL ENERGY in kWh)", 45, 565);
 	    
 	 // draw enclosure and legend For setup area
 	    fill(GREY);
@@ -551,15 +584,89 @@ public class BankingHall extends PApplet {
 	}
 	
 
+private void evaluateACsNeeded() {
+	
+		Space [] spaces = {counter, lobby, customerSP};
+		 println ("Hour: " + time.hour());
+		for (Space space : spaces) {
+			
+			// The temperatures to cool to considered
+			float target = controlAC.getMinTemp();
+			
+			// Get population
+			int pop = space.getPopulation();
+			
+			// declare constants
+			double heatPerPerson = 130;  // Watts
+			float density = 1.205f;  // kg/m3 -- air density
+			float specificHeat = 1.006f; // kJ/kg.K --air specific heat capacity
+									
+			// calc variables
+			double volumeFlowRate = (space.getVolume()* 0.2)/3600;   // m3/s
+			float dT = ambientT - target;
+			double e4cooling = 0;
+			 
+			 // 1. Determine energy e required to cool = energy to cool empty space to minTemp + heat energy from population
+			 double e2coolKj = density*volumeFlowRate*specificHeat*dT + heatPerPerson*pop;               // kJ
+			 // @FIXME: 1b if e > 0 goto 2, else goto 1
+		     
+			 // 2. Determine the ACs required for cooling based on 1 - either main, back-up or both
+			 double e2coolBtu = e2coolKj * 1.055;				// 1 btu = 1.055kJ
+			 
+			 //3. we need AC to supply e2coolBtu in time2cool minutes, so
+			 double requiredBtuPerHr = e2coolBtu; // * (60/maxTime2Cool);
+			
+			 //4. check which AC(s) has this 'power' and start it/them
+			 if (space.getBackupAC().getCapacityBTU() >= requiredBtuPerHr) {
+				space.getBackupAC().setOn(true);
+				e4cooling = space.getBackupAC().getCapacityBTU();
+				println(space.getName() + ": Backup chosen." + " Temp: " + ambientT + ", Population: " + pop);
+			 }
+			 else if (space.getMainAC().getCapacityBTU() >= requiredBtuPerHr) {
+				 space.getMainAC().setOn(true);
+				 e4cooling = space.getMainAC().getCapacityBTU();
+				 println(space.getName() + ": Main chosen." + " Temp: " + ambientT + ", Population: " + pop);
+			 }
+			 else if (space.getBackupAC().getCapacityBTU()+ space.getMainAC().getCapacityBTU() >= requiredBtuPerHr) {
+				 space.getBackupAC().setOn(true);
+				 space.getMainAC().setOn(true);
+				 e4cooling = space.getBackupAC().getCapacityBTU() + space.getMainAC().getCapacityBTU();
+				 println(space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Population: " + pop);
+			 }
+			 else {
+				 displayMsg("ERROR: Insufficient capacity in AC for: " + space.getName(), DARK_RED);
+				 println(space.getName() + ": Required: " + e2coolBtu + ", Available: " + 
+				 (space.getBackupAC().getCapacityBTU() + space.getMainAC().getCapacityBTU())
+				 + ". Temp: " + ambientT + ", Population: " + pop);
+				 e4cooling = space.getBackupAC().getCapacityBTU() + space.getMainAC().getCapacityBTU();
+				 //stopSimulation();
+				 //return;
+			 }
+			 
+			 // 5. Calculate energy consumed by AC for running for time t, based on the AC capacity
+			 double eConsumed = (e4cooling/(EER*1000));                // in kWh, energy consumed for this hour
+			 manEnergy += eConsumed;
+			
+			 
+			 
+			 
+		}
+			
+		
+	  
+			
+	}
+
+
+
 private void changePopAndTemp(int hr) {
 		// update population and temp data if it has changed
 		if (inPop.get(hr)!= population) {
 			population = inPop.get(hr);
 			distributePopulation();
-		}
-		if (inTemp.get(hr)!= ambientT) {
 			ambientT = inTemp.get(hr);
-		}
+			evaluateACsNeeded();
+		}	
 		
 	}
 
@@ -573,8 +680,8 @@ private void distributePopulation() {
 		Random rand = new Random();
 		for (int i=0; i < population; i++) {
 			int next = rand.nextInt(3);  //generates 0, 1, or 2.
-			if (next==0) counter.setPopulation(counter.getPopulation()+1);
-			else if (next==1) lobby.setPopulation(lobby.getPopulation()+1);
+			if (next==0) lobby.setPopulation(counter.getPopulation()+1);
+			else if (next==1) counter.setPopulation(lobby.getPopulation()+1);
 			else customerSP.setPopulation(customerSP.getPopulation()+1);
 		}
 		
@@ -782,6 +889,9 @@ private void displayMsg(String msg, int color) {
 		// set current event
 		event = "STARTED";
 		
+		// evaluate ACs needed for first time
+		evaluateACsNeeded();
+		
 	}
 
 
@@ -805,17 +915,17 @@ private void displayMsg(String msg, int color) {
 		double counterL = Double.parseDouble(cp5.get(Textfield.class, "counterL").getText());
 		double counterB = Double.parseDouble(cp5.get(Textfield.class, "counterB").getText());
 		double counterH = Double.parseDouble(cp5.get(Textfield.class, "counterH").getText());
-		counter = new Space(counterL, counterB, counterH);
+		counter = new Space(counterL, counterB, counterH, "Counter");
 		
 		double lobbyL = Double.parseDouble(cp5.get(Textfield.class, "lobbyL").getText());
 		double lobbyB = Double.parseDouble(cp5.get(Textfield.class, "lobbyB").getText());
 		double lobbyH = Double.parseDouble(cp5.get(Textfield.class, "lobbyH").getText());
-		lobby = new Space(lobbyL, lobbyB, lobbyH);
+		lobby = new Space(lobbyL, lobbyB, lobbyH, "Lobby");
 		
 		double cspL = Double.parseDouble(cp5.get(Textfield.class, "cspL").getText());	
 		double cspB = Double.parseDouble(cp5.get(Textfield.class, "cspB").getText());	
 		double cspH = Double.parseDouble(cp5.get(Textfield.class, "cspH").getText());
-		customerSP = new Space (cspL, cspB, cspH);
+		customerSP = new Space (cspL, cspB, cspH, "CustomerSP");
 		
 		// initialize the time
 		time  = new ControlTimer();
@@ -824,14 +934,14 @@ private void displayMsg(String msg, int color) {
 		population = inPop.get(0);
 		ambientT = inTemp.get(0);
 		
+		// Default all space temperatures to ambientT
+		counter.getSensor().setTemp(min);
+		lobby.getSensor().setTemp(min);
+		customerSP.getSensor().setTemp(min);
+		
 		// Distribute population randomly among the Spaces
 		distributePopulation();
 		
-		// Default all space temperatures to ambientT
-		counter.getSensor().setTemp(ambientT);
-		lobby.getSensor().setTemp(ambientT);
-		customerSP.getSensor().setTemp(ambientT);
-		// println ("Init: ambientT")
 		return true;
 	}
 
@@ -926,7 +1036,7 @@ private void displayMsg(String msg, int color) {
 			inPop = new ArrayList<Integer> ();
 			for (int loop = 0; loop <= WORKINGHOURS; loop++) {
 				str = buf.readLine();
-				println(str);
+				// println(str);
 				if (loop > 0) {
 					splitStr = str.split(",");
 					try {
@@ -963,7 +1073,7 @@ private void displayMsg(String msg, int color) {
 			}
 			
 			buf.close();
-			println("Temp: " + inTemp + " Pop: " + inPop);
+			// println("Temp: " + inTemp + " Pop: " + inPop);
 		
 			return true;
 		}
