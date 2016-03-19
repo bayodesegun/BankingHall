@@ -15,6 +15,9 @@ public class Space {
 	private int population;
 	private String name;
 	
+	// Total BTU needed to cool
+	private double totalBTU;
+	
 	private CoolingUnit mainAC;
 	private CoolingUnit backupAC;
 	
@@ -31,22 +34,21 @@ public class Space {
 		volume = l*w*h;
 		sizeACs();
 		sensor = new Sensor();
-		setPopulation(0);
-		setName(n);
+		population = 0;
+		name = n;
 	}
 	
 	private void sizeACs() {
-		// put the right calc on the 1st line
 		// Reference for BTU calculation based on space dimension and expected population: {insert reference}
 		
-		double btuPerPerson = 500;   // BTU/hr
-		double numberOfPeople = this.getArea()*0.2;  // each person occupying 1m2, at 20% space capacity utilization
+		double btuPerPerson = 450;   						// BTU/hr
+		double numberOfPeople = this.getArea()*0.2;  		// each person occupying 1m2, at 20% space capacity utilization
 		
-		double btu = this.getVolume()*6 + btuPerPerson*numberOfPeople;
+		totalBTU = this.getVolume()*6 + btuPerPerson*numberOfPeople;
 		
 		// split the capacity btw main and backUp, at 60:40
-		mainAC = new CoolingUnit(0.6*btu);
-		backupAC = new CoolingUnit(0.4*btu);
+		mainAC = new CoolingUnit(0.6*totalBTU);
+		backupAC = new CoolingUnit(0.4*totalBTU);
 	}
 
 	public double getArea() {
@@ -105,13 +107,15 @@ public class Space {
 	public String getName() {
 		return name;
 	}
-
+	
 	/**
-	 * @param name the name to set
+	 * @return the totalBTU
 	 */
-	public void setName(String name) {
-		this.name = name;
+	public double getTotalBTU() {
+		return totalBTU;
 	}
+
+	
 
 	
 	
