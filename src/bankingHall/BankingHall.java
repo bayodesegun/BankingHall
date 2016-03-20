@@ -15,11 +15,12 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.TimeUnit;
-
 import javax.swing.JFileChooser;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
@@ -50,9 +51,15 @@ public class BankingHall extends PApplet implements Runnable {
 	BufferedWriter hourly;
 	BufferedWriter log;
 	
-	private int currHour =0;
-	private List<Float> inTemp;
-	private List<Integer> inPop;
+	private int currHour=0, currDay=1, days=0;
+	private HashMap<Integer, List<Float>> inTemp;
+	private HashMap<Integer, List<Integer>> inPop;
+	private List<String> cummulList;
+	private List<String> hourlyList;
+	
+	private HashMap<Integer, List<String>> outputHourly;
+	private HashMap<Integer, List<String>> outputCummul;
+	
 	
 	private String event = "IDLE";
 		
@@ -61,8 +68,14 @@ public class BankingHall extends PApplet implements Runnable {
 	private double saveRatio=0;
 	private double totalKW;
 	
+	private double rawEnergyDaily = 0;
+	private double manEnergyDaily = 0;
+	private double saveRatioDaily=0;
+	
+	
 	public ControlP5 cp5;
 	ControlTimer time;
+	Textarea pLog;
 	
 	private boolean start = false;
 	
@@ -111,7 +124,7 @@ public class BankingHall extends PApplet implements Runnable {
 		background(GREY);               
 		
 		PFont labelFont = createFont("arial", 13);    // label font
-		PFont textFont = createFont("arial", 15);     // text font
+		PFont textFont = createFont("arial", 16);     // text font
 		
 		
 		
@@ -124,19 +137,19 @@ public class BankingHall extends PApplet implements Runnable {
 				  
 		// draw the temperature indicator rects
 		
-	    // Add scrollable list for info
-	    String[] list = {"a", "b", "c", "d", "e", "f", "g", "h"};
-	    cp5.addScrollableList("programLog")
-		   .setPosition(15,15)
-	       .setSize(450,150)
+	   // Add scrollable list for info
+	    
+	    cp5.addTextarea("programLog")
+		   .setPosition(5,5)
+	       .setSize(495,210)
 	       .setColorBackground(WHITE)
-	       .setColorForeground(BLACK)
-	       .setBarHeight(20)
-	       .setItemHeight(20)
-	       .setLabelVisible(false)
-	       .setType(ScrollableList.LIST) // currently supported DROPDOWN and LIST
-	       .addItems(list)
-	      // .setLock(true)
+	       .setColorForeground(WHITE)
+	       .setLineHeight(35)
+	       .setText("-----Program Log-----")
+	       .setFont(textFont)
+	        .setScrollForeground(BLACK)
+	       .setColor(BLACK)
+	      
 		   ;
 	    
 	    // temp at the counter 		
@@ -514,14 +527,17 @@ public class BankingHall extends PApplet implements Runnable {
 	public void draw()
 	{
 		// things that should run when start is enabled
+				
 	    if (start)	
-	    {    
+	    {  
+	    	cp5.get(Textarea.class, "programLog").scroll(1);
 	    	cp5.get(Textfield.class, "currentTime").setText(time.toString());
 	    	
-	    	 	
+	    	int hour = time.hour();
+	    	 
 	    	// Read and Write hourly data
-	    	if (time.hour() > 0) {
-	    		int hour = time.hour();
+	    	if (hour > 0) {
+	    		if (hour == 8) println("current hour: " + hour);	
 	    		if (currHour != hour) {
 	    			currHour = hour;
 	    			updateHourlyData(hour);
@@ -533,15 +549,34 @@ public class BankingHall extends PApplet implements Runnable {
 	    	updateBoundFields();
 	    	
 	    	 
-		    if (time.hour()==WORKINGHOURS) {
-	    		// for the Last Time...in case not done already
-	    		// updateBoundFields();
-	    		// updateHourlyData(time.hour());
-	    		
-	    		// Then...
-	    		stopSimulation();
-				displayMsg("EVENT: Simulation ended due to end of working hours.", DARK_GREEN);
-	    		event ="DAY END";
+		    if (hour == WORKINGHOURS) {
+		    	pLog.append("\nEVENT: Simulation ended for day " + currDay + " of " + days + "\n");
+		    	event ="DAY END";
+		    	
+		    	if (currDay + 1 > days) {
+		    		displayMsg("EVENT: Simulation ended due to end of day " + currDay + " of " + days, DARK_GREEN);
+		    		
+		    		
+		    		
+		    		// Write these values to hourly and daily Arrays Finally code hour = 16
+		    		writeEnergyDataToArray(16, 0, 0, rawEnergyDaily, manEnergyDaily, saveRatioDaily, hourlyList);
+		    		writeEnergyDataToArray(16, 0, 0, rawEnergyDaily, manEnergyDaily, saveRatioDaily, cummulList);
+		    		
+		    		// Write these values to hourly Array Finally code hour = 112 i.e. the whole "n" days
+		    		writeEnergyDataToArray(112, 0, 0, rawEnergy, manEnergy, saveRatio, hourlyList);
+		    		
+		    		// update HashMaps with the last day
+		    		outputHourly.put(currDay, hourlyList);
+		    		outputCummul.put(currDay, cummulList);
+		    		
+		    		// Update field and stop
+		    		updateBoundFields();
+		    		stopSimulation();
+		    				
+		    	}
+		    	else startNexDaySimulation();
+	    						
+	    	
 	      	}
 	        		
 	    }
@@ -551,11 +586,28 @@ public class BankingHall extends PApplet implements Runnable {
 		
 		   
 		// load the images
-	    loadImages();
+	    //loadImages();
 	   
 		
 	}
 	
+
+private void updateBoundFields() {
+	
+	//1. update the Space temperatures
+	cp5.get(Numberbox.class, "ambientTemp").setValue(ambientT);
+	cp5.get(Numberbox.class, "counterTemp").setValue((float) counter.getSensor().getTemp());
+	cp5.get(Numberbox.class, "lobbyTemp").setValue((float) lobby.getSensor().getTemp());
+	cp5.get(Numberbox.class, "cspTemp").setValue((float) customerSP.getSensor().getTemp());
+	updateSpaceTempBoxColors();
+	
+	//2. update the Energy data
+	cp5.get(Numberbox.class, "rawEnergy").setValue((float) rawEnergy);
+	cp5.get(Numberbox.class, "manEnergy").setValue((float) manEnergy);
+	if (rawEnergy != 0) saveRatio = ((rawEnergy - manEnergy)/rawEnergy)*100;
+	cp5.get(Numberbox.class, "saveRatio").setValue((float) saveRatio);
+	}
+
 
 private void loadImages() {
 	if (start) {
@@ -586,191 +638,39 @@ private void loadImages() {
 
 
 private void persistEnclosures() {
-		// draw enclosure and legend For temperatures
-	    fill(GREY);
-	    rect (0,625,400,75);
-	    textSize(15);
-	    fill(BLACK);
-	    text("TEMPERATURES (DEG. C)", 112, 640);
-	    
-	    // draw enclosure and legend For simulation status
-	    fill(GREY);
-	    rect (0,550,400,75);
-	    textSize(15);
-	    fill(BLACK);
-	    text("SIMULATION RESULTS (ALL ENERGY in kWh)", 45, 565);
-	    
-	    // draw enclosure and legend For setup area
-	    fill(GREY);
-	    rect (400,550,500,150);
-	    textSize(15);
-	    fill(BLACK);
-	    text("SETUP", 625, 565);	
-	    
-	    // Draw the banking hall sections
-	   fill(GREY);
-	   rect(0,0,900,220);       //COUNTER
-	   rect(0,220,500,288);		//LOBBY
-	   rect(500,220,400,288);	//CUST. SERV.
-	   
-	   fill(WHITE);
-	   text("COUNTER", 410, 115);
-	   text("LOBBY", 240, 360);
-	   text("CUST SERV", 680, 360);
-	}
+	// draw enclosure and legend For temperatures
+    fill(GREY);
+    rect (0,625,400,75);
+    textSize(15);
+    fill(BLACK);
+    text("TEMPERATURES (DEG. C)", 112, 640);
+    
+    // draw enclosure and legend For simulation status
+    fill(GREY);
+    rect (0,550,400,75);
+    textSize(15);
+    fill(BLACK);
+    text("SIMULATION RESULTS (ALL ENERGY in kWh)", 45, 565);
+    
+    // draw enclosure and legend For setup area
+    fill(GREY);
+    rect (400,550,500,150);
+    textSize(15);
+    fill(BLACK);
+    text("SETUP", 625, 565);	
+    
+    // Draw the banking hall sections
+   fill(GREY);
+   rect(0,0,900,220);       //COUNTER
+   rect(0,220,500,288);		//LOBBY
+   rect(500,220,400,288);	//CUST. SERV.
 
+   fill(WHITE);
+   text("COUNTER", 410, 115);
+   text("LOBBY", 240, 360);
+   text("CUST SERV", 680, 360);
+}
 
-private void updateBoundFields() {
-	
-	//1. update the Space temperatures
-	cp5.get(Numberbox.class, "ambientTemp").setValue(ambientT);
-	cp5.get(Numberbox.class, "counterTemp").setValue((float) counter.getSensor().getTemp());
-	cp5.get(Numberbox.class, "lobbyTemp").setValue((float) lobby.getSensor().getTemp());
-	cp5.get(Numberbox.class, "cspTemp").setValue((float) customerSP.getSensor().getTemp());
-	updateSpaceTempBoxColors();
-	
-	//2. update the Energy data
-	cp5.get(Numberbox.class, "rawEnergy").setValue((float) rawEnergy);
-	cp5.get(Numberbox.class, "manEnergy").setValue((float) manEnergy);
-	
-	cp5.get(Numberbox.class, "saveRatio").setValue((float) saveRatio);
-	}
-
-
-private void evaluateACsNeeded() {
-	
-		Space [] spaces = {counter, lobby, customerSP};
-		double eConsumedKj = 0;
-		double eConsumedKjTotal = 0;
-		println ("Hour " + time.hour() + ":");
-		for (Space space : spaces) {
-			
-			// The temperatures to cool to considered
-			float target = controlAC.getMinTemp();
-			
-			// Get population
-			int pop = space.getPopulation();
-			
-			// declare constants
-			double heatPerPerson = 130;  // Watts
-			double density = 1.205;  // kg/m3 -- air density
-			double specificHeat = 1.006; // kJ/kg.K --air specific heat capacity
-									
-			// calc variables
-			double volumeFlowRate = (space.getVolume()* 0.2)/3600;   // m3/s
-			float dT = ambientT - target;
-			double e4cooling = 0;
-			 
-			 // 1. Determine energy e required to cool = energy to cool empty space to minTemp + heat energy from population
-			 double e2coolKj = density*volumeFlowRate*specificHeat*dT + heatPerPerson*pop;               // kJ
-			 // @FIXME: 1b if e > 0 goto 2, else goto 1
-		     
-			 // 2. Determine the ACs required for cooling based on 1 - either main, back-up or both
-			 double requiredBtuPerHr = e2coolKj * 1.055;				// 1 btu = 1.055kJ
-			 
-			 			
-			 //3. check which AC(s) has this 'power' and start it/them
-			 if (space.getBackupAC().getCapacityBTU() >= requiredBtuPerHr) {
-				space.getBackupAC().setOn(true);
-				e4cooling = space.getBackupAC().getCapacityBTU();
-				// displayMsg(space.getName() + ": Backup chosen." + " Temp: " + ambientT + ", Population: " + pop, DARK_GREEN);
-				println(space.getName() + ": Backup chosen." + " Temp: " + ambientT + ", Population: " + pop);
-			 }
-			 else if (space.getMainAC().getCapacityBTU() >= requiredBtuPerHr) {
-				 space.getMainAC().setOn(true);
-				 e4cooling = space.getMainAC().getCapacityBTU();
-				 println(space.getName() + ": Main chosen." + " Temp: " + ambientT + ", Population: " + pop);
-				 //displayMsg(space.getName() + ": Main chosen." + " Temp: " + ambientT + ", Population: " + pop, DARK_YELLOW);
-			 }
-			 else if (space.getTotalBTU() >= requiredBtuPerHr) {
-				 space.getBackupAC().setOn(true);
-				 space.getMainAC().setOn(true);
-				 e4cooling = space.getTotalBTU();
-				 println(space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Population: " + pop);
-				 // displayMsg(space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Population: " + pop, DARK_BROWN);
-			 }
-			 else {
-				 displayMsg("WARNING: Insufficient AC capacity in: " + space.getName(), DARK_RED);
-				 e4cooling = space.getTotalBTU();
-				 println(space.getName() + ": Required: " + requiredBtuPerHr + ", Available: " + 
-						 e4cooling + ". Temp: " + ambientT + ", Population: " + pop);
-				 
-				 //stopSimulation();
-				 //return;
-			 }
-			 
-			 // 5. Calculate energy consumed by AC for running for time t, based on the AC capacity
-			 eConsumedKj = (e4cooling/(EER*1000));                // in kWh, energy consumed for this hour by this space
-			 eConsumedKjTotal += eConsumedKj;						// for all spaces for this hour
-			 
-			 
-						 			 
-		}
-		// Write hourly data to file
-		writeEnergyDataToFile(time.hour(), totalKW, eConsumedKjTotal, hourly);
-		
-		// update cumulative managed energy
-		manEnergy += eConsumedKjTotal;
-			
-		
-	  
-			
-	}
-
-private void updateHourlyData(int hr) {
-		// update population and temp data if it has changed, double-check hour
-		
-			
-			population = inPop.get(hr-1);
-			distributePopulation();
-			ambientT = inTemp.get(hr-1);
-			evaluateACsNeeded();
-			rawEnergy = hr * totalKW;
-			if (rawEnergy != 0) saveRatio = ((rawEnergy - manEnergy)/rawEnergy)*100;
-			writeEnergyDataToFile(hr, rawEnergy, manEnergy, cummul);
-			
-	}
-
-
-private void distributePopulation() {
-		// reset space population data and 
-		// randomly distribute population among the three areas
-		counter.setPopulation(0);
-		lobby.setPopulation(0);
-		customerSP.setPopulation(0);
-		Random rand = new Random();
-		for (int i=0; i < population; i++) {
-			int next = rand.nextInt(3);  //generates 0, 1, or 2.
-			if (next==0) lobby.setPopulation(counter.getPopulation()+1);
-			else if (next==1) counter.setPopulation(lobby.getPopulation()+1);
-			else customerSP.setPopulation(customerSP.getPopulation()+1);
-		}
-		
-	}
-
-
-private void updateSpaceTempBoxColors() {
-	// a = ambient
-	int rgb_a[] = calcRelativeColor(ambientT);
-	int color_a = color(rgb_a[0], rgb_a[1], rgb_a[2]);
-	cp5.get(Numberbox.class, "ambientTemp").setColorBackground(color_a);
-	
-	// c = counter
-	int rgb_c[] = calcRelativeColor(counter.getSensor().getTemp());
-	int color_c = color(rgb_c[0], rgb_c[1], rgb_c[2]);
-	cp5.get(Numberbox.class, "counterTemp").setColorBackground(color_c);
-	
-	// l = lobby
-	int rgb_l[] = calcRelativeColor(lobby.getSensor().getTemp());
-	int color_l = color(rgb_l[0], rgb_l[1], rgb_l[2]);
-	cp5.get(Numberbox.class, "lobbyTemp").setColorBackground(color_l);
-	
-	// cs = customer service
-	int rgb_cs[] = calcRelativeColor(customerSP.getSensor().getTemp());
-	int color_cs = color(rgb_cs[0], rgb_cs[1], rgb_cs[2]);
-	cp5.get(Numberbox.class, "cspTemp").setColorBackground(color_cs);
-	
-	}
 
 private int[] calcRelativeColor(float temp) {
 	
@@ -794,57 +694,32 @@ private int[] calcRelativeColor(float temp) {
 }
 
 
-
-private void displayMsg(String msg, int color) {
-	Textfield errorBox = cp5.get(Textfield.class, "errorMsg");
-	errorBox.setText(msg);
-	errorBox.setColor(color);
-		
-	}
-
-
-
-
+	private void updateSpaceTempBoxColors() {
+	// a = ambient
+	int rgb_a[] = calcRelativeColor(ambientT);
+	int color_a = color(rgb_a[0], rgb_a[1], rgb_a[2]);
+	cp5.get(Numberbox.class, "ambientTemp").setColorBackground(color_a);
 	
-	private void chooseFile() {
-		//Create a file chooser
-		final JFileChooser fc = new JFileChooser(currDir);
-		
-		FileNameExtensionFilter filter = new FileNameExtensionFilter(
-		        "CSV Files", "csv");
-		
-		fc.setAcceptAllFileFilterUsed(false);
-		fc.setFileFilter(filter);
-				
-		//In response to a button click:
-		int returnVal = fc.showOpenDialog(this);
-		String cummul = "\\cummul.csv";
-		String hourly = "\\hourly.csv";
-		String log = "\\cummul.log";
-		
-		if (returnVal == JFileChooser.APPROVE_OPTION) {
-            File file = fc.getSelectedFile();
-            cp5.get(Textfield.class, "inputFilePath").setText(file.getAbsolutePath());
-            cp5.get(Textfield.class, "outputFilePath").setText(file.getParent());
-            currDir = file.getPath();
-            inFile = new File(file.getAbsolutePath());
-            outFileCummul = new File(file.getParent() + cummul);
-            outFileHourly = new File(file.getParent() + hourly);
-            outFileLog = new File(file.getParent() + log);
-           
-        } 
-		else {
-           
-			displayMsg("WARNING: File selection was cancelled.", DARK_RED);
-			
-        }     
-		
-		
+	// c = counter
+	int rgb_c[] = calcRelativeColor(counter.getSensor().getTemp());
+	int color_c = color(rgb_c[0], rgb_c[1], rgb_c[2]);
+	cp5.get(Numberbox.class, "counterTemp").setColorBackground(color_c);
+	
+	// l = lobby
+	int rgb_l[] = calcRelativeColor(lobby.getSensor().getTemp());
+	int color_l = color(rgb_l[0], rgb_l[1], rgb_l[2]);
+	cp5.get(Numberbox.class, "lobbyTemp").setColorBackground(color_l);
+	
+	// cs = customer service
+	int rgb_cs[] = calcRelativeColor(customerSP.getSensor().getTemp());
+	int color_cs = color(rgb_cs[0], rgb_cs[1], rgb_cs[2]);
+	cp5.get(Numberbox.class, "cspTemp").setColorBackground(color_cs);
+	
 	}
 
 
-
-	public void Start(int theValue) throws InterruptedException, IOException {
+public void Start(int theValue) throws InterruptedException, IOException {
+		
 		String value = cp5.get(Button.class, "Start").getLabel().toUpperCase();
 		boolean allOK = false;
 		if (value.equals("START")) {
@@ -862,6 +737,7 @@ private void displayMsg(String msg, int color) {
 		else if (value.equals("STOP")) {
 			// stop the simulation
 			displayMsg ("EVENT: Simulation manually terminated via STOP button.", DARK_RED);
+			pLog.append("\nEVENT: Simulation manually terminated via STOP button.\n");
 			event = "STOPPED";
 			stopSimulation();
 					
@@ -872,7 +748,8 @@ private void displayMsg(String msg, int color) {
 		  
 		 
 	}
-	
+
+
 	public void browseForFile(int theValue) {
 		// the chooseFile button was clicked, call method to handle file choose
 		chooseFile();
@@ -880,6 +757,475 @@ private void displayMsg(String msg, int color) {
 	}
 
 
+	private void chooseFile() {
+		//Create a file chooser
+		final JFileChooser fc = new JFileChooser(currDir);
+		
+		FileNameExtensionFilter filter = new FileNameExtensionFilter(
+		        "CSV Files", "csv");
+		
+		fc.setAcceptAllFileFilterUsed(false);
+		fc.setFileFilter(filter);
+				
+		//In response to a button click:
+		int returnVal = fc.showOpenDialog(this);
+		
+				
+		if (returnVal == JFileChooser.APPROVE_OPTION) {
+	        File file = fc.getSelectedFile();
+	        cp5.get(Textfield.class, "inputFilePath").setText(file.getAbsolutePath());
+	        cp5.get(Textfield.class, "outputFilePath").setText(file.getParent());
+	        currDir = file.getParent();
+	        inFile = new File(file.getAbsolutePath());
+	                   
+	    } 
+		else {
+	       
+			displayMsg("WARNING: File selection was cancelled.", DARK_RED);
+			
+	    }     
+		
+		
+	}
+
+
+private boolean allInputOK() {
+	boolean ret = true;
+	event = "VALIDATING...";
+	// clear the message box
+	displayMsg("", DARK_RED);
+	// check if simulation speed has been selected:
+	float speed = cp5.get(RadioButton.class, "simSpeed").getValue();
+	if (speed <= 0.0){   												// none selected
+		displayMsg("ERROR: Please choose a simulation speed.", DARK_RED);
+		return false;
+	}
+	
+	// check if data source has been selected:
+	String path = cp5.get(Textfield.class, "outputFilePath").getText();
+	if (path.equals("")) {
+		displayMsg("ERROR: Please choose a data source.",DARK_RED);
+		return false;
+	}
+	
+	// Now we check all text fields for proper entry, in a loop
+	String [] fields = {"counterL", "counterB", "counterH", "lobbyL", "lobbyB", "lobbyH", "cspL", "cspB", "cspH", "minTemp", "maxTemp"};
+	
+	// get and check the content (text) of each field...
+	for (String cField: fields)                    	//cField = current field
+	{							
+		Textfield field = cp5.get(Textfield.class, cField);
+		float value = 0;
+		
+		// add call callback event to restore background to white on mouse "click" on the fields
+		// ...in case field is flagged and background changed to red
+		field.addCallback(new CallbackListener() {
+		    public void controlEvent(CallbackEvent theEvent) {
+		      if (theEvent.getAction()==ControlP5.ACTION_ENTER) {
+		    	  field.setColorBackground(WHITE);
+		      }
+		    }
+		  }
+		  );
+		
+		// try converting the field to a float value
+		try 
+		{
+			value = Float.parseFloat(field.getText());
+		// if error, then a numeric value was not entered
+		} catch (NumberFormatException e) 
+		{
+			// display warning and set background to red
+			displayMsg("ERROR: Please enter numeric value(s) in the red box(es).", DARK_RED);
+			field.setColorBackground(LIGHT_RED);
+			ret = false;									// we need to return false
+			
+		}
+		// We are not accepting negative values!
+		if (value < 0){
+			displayMsg("ERROR: Please enter positive value(s) in the red box(es).", DARK_RED);
+			field.setColorBackground(LIGHT_RED);
+			ret = false;
+		}
+	}
+	// if any of the field has issues then abort and return false!
+	if (!ret) return false;
+	
+	// Now, we check that min temp <= max temp (by now we are sure the values are numeric)
+	float min = Float.parseFloat(cp5.get(Textfield.class, "minTemp").getText());
+	float max = Float.parseFloat(cp5.get(Textfield.class, "maxTemp").getText());
+	if (min > max) {
+		displayMsg("ERROR: Min temp cannot be greater than max temp.", DARK_RED);
+		return false;
+	}
+	
+	return true;
+}
+
+
+private boolean objectsInitialized()  {
+	
+	event = "INITIALIZING...";
+	boolean dataFileOK = true;
+	// Initialize temperature and population data from inFile
+	// returns true is the initialization was successful, false otherwise
+	
+	dataFileOK = fileDataReadOK(inFile);
+	if (!dataFileOK) return false;
+	
+	// set current day to day 1
+	
+	days = inPop.size();
+	
+	// initialize ACController
+	float min = Float.parseFloat(cp5.get(Textfield.class, "minTemp").getText());
+	float max = Float.parseFloat(cp5.get(Textfield.class, "maxTemp").getText());
+	controlAC = new ACController(min, max);
+	
+	// initialize Space Objects
+	double counterL = Double.parseDouble(cp5.get(Textfield.class, "counterL").getText());
+	double counterB = Double.parseDouble(cp5.get(Textfield.class, "counterB").getText());
+	double counterH = Double.parseDouble(cp5.get(Textfield.class, "counterH").getText());
+	counter = new Space(counterL, counterB, counterH, "Counter");
+	
+	double lobbyL = Double.parseDouble(cp5.get(Textfield.class, "lobbyL").getText());
+	double lobbyB = Double.parseDouble(cp5.get(Textfield.class, "lobbyB").getText());
+	double lobbyH = Double.parseDouble(cp5.get(Textfield.class, "lobbyH").getText());
+	lobby = new Space(lobbyL, lobbyB, lobbyH, "Lobby");
+	
+	double cspL = Double.parseDouble(cp5.get(Textfield.class, "cspL").getText());	
+	double cspB = Double.parseDouble(cp5.get(Textfield.class, "cspB").getText());	
+	double cspH = Double.parseDouble(cp5.get(Textfield.class, "cspH").getText());
+	customerSP = new Space (cspL, cspB, cspH, "CustomerSP");
+	
+	// initialize the time
+	time  = new ControlTimer();
+	
+	// Initialize population and temperature data
+	
+	population = inPop.get(currDay).get(0);
+	ambientT = inTemp.get(currDay).get(0);
+	
+	// Default all space temperatures to ambientT
+	counter.getSensor().setTemp(min);
+	lobby.getSensor().setTemp(min);
+	customerSP.getSensor().setTemp(min);
+			
+	double totalBTU = counter.getTotalBTU()+ customerSP.getTotalBTU()+	lobby.getTotalBTU();
+	totalKW = totalBTU/(EER*1000);
+	
+	// Initialize output HashMaps and Lists
+	outputHourly = new HashMap<Integer, List<String>>();
+	outputCummul = new HashMap<Integer, List<String>>();
+	cummulList = new ArrayList<String>();
+	hourlyList = new ArrayList<String>();
+	
+	// Initialize output data files
+	String timeStamp = new SimpleDateFormat("yyyyMMMdd_HHmmss").format(Calendar.getInstance().getTime());  //for unique file names
+	String cummulFile = "\\cummul_" + timeStamp + ".csv";
+	String hourlyFile = "\\hourly_" + timeStamp + ".csv";
+	String logFile = "\\cummul_" + timeStamp + ".log";
+	
+	outFileCummul = new File(inFile.getParent() + cummulFile);
+    outFileHourly = new File(inFile.getParent() + hourlyFile);
+    outFileLog = new File(inFile.getParent() + logFile);
+    
+    pLog = cp5.get(Textarea.class, "programLog");
+    
+    return true;
+}
+
+
+private boolean fileDataReadOK(File file) {
+	try {
+		BufferedReader buf = new BufferedReader(new FileReader(file));
+		
+		String line, error;
+		String [] splitted;
+		
+		inTemp = new HashMap<Integer, List<Float>>();
+		inPop = new HashMap <Integer, List<Integer>>();
+		
+		int day = 0;
+					
+		// Header of the CSV file will be read but not used, so Read the next line!!
+		buf.readLine();
+		line = buf.readLine();	
+		
+		
+		while (line != null) {
+			
+			day++;
+			List<Float> inTempList = new ArrayList<Float> ();
+			List<Integer> inPopList = new ArrayList<Integer> ();
+			for (int loop = 0; loop < WORKINGHOURS; loop++) {
+				
+				splitted = line.split(",");
+				try {
+					inTempList.add(Float.parseFloat(splitted[1]));
+				} catch (NumberFormatException e) {
+					error = "ERROR: Invalid temperature in input file for hour: " + loop + ", " + day;
+					displayMsg(error, DARK_RED);
+					buf.close();
+					return false;
+				}
+				catch (ArrayIndexOutOfBoundsException e) {
+					error = "ERROR: Missing temperature in input file for hour: " + loop + ", " + day;;
+					displayMsg(error, DARK_RED);
+					buf.close();
+					return false;
+				}
+				try {
+					inPopList.add(Integer.parseInt(splitted[2]));
+				} catch (NumberFormatException e) {
+					error = "ERROR: Invalid population in input file for hour: " + loop + ", " + day;;
+					displayMsg(error, DARK_RED);
+					buf.close();
+					return false;
+				}
+				catch (ArrayIndexOutOfBoundsException e) {
+					error = "ERROR: Missing population data in input file for hour: " + loop + ", " + day;;
+					displayMsg(error, DARK_RED);
+					buf.close();
+					return false;
+				}
+				line = buf.readLine();		
+			}
+			inTemp.put(day, inTempList);
+			inPop.put(day, inPopList);
+			
+		}
+		
+		buf.close();
+		// println("Temp: " + inTemp + "\n Pop: " + inPop);
+		
+		
+		return true;
+	}
+	catch(FileNotFoundException ex) {
+		// file not found
+		String error = "ERROR: File not found!";
+		displayMsg(error, DARK_RED);
+		return false;
+		
+	}
+	catch(IOException ex) {
+		// other I/O error
+		String error = "ERROR: unknown I/O error while reading file!";
+		displayMsg(error, DARK_RED);
+		return false;
+	}
+	
+	catch(NullPointerException ex) {
+		// other I/O error
+		String error = "ERROR: incomplete data? Kindly ensure 8hrs data for each day";
+		displayMsg(error, DARK_RED);
+		return false;
+	}
+}
+
+
+private void startSimulation() {
+	
+	// Disable applicable controls to prevent in-run modifications
+	//1. close the Radio buttons
+	cp5.get(RadioButton.class, "simSpeed").close();
+	
+	
+	//2. lock all text fields to prevent further entry, in a loop
+	String [] fields = {"counterL", "counterB", "counterH", "lobbyL", "lobbyB", "lobbyH", "cspL", "cspB", "cspH", "minTemp", "maxTemp"};
+	
+	for (String cField: fields)                    	//cField = current field
+	{							
+		// get each field and...lock it!
+		cp5.get(Textfield.class, cField).lock();
+	}
+	
+		
+	// change button label to "Stop"
+	cp5.get(Button.class, "Start").setLabel("Stop")
+	.setColorBackground(DARK_RED)
+     .setColorForeground(LIGHT_RED)
+	;
+	// start simulation: reset time, set simulation speed
+	start = true;
+	time.reset();
+	float speed = cp5.get(RadioButton.class, "simSpeed").getValue();
+	time.setSpeedOfTime(speed);
+	
+	// set current event
+	event = "STARTED";
+	int records = days*8;
+	// display records info
+	pLog.clear();
+	pLog.append(records + " records in input file --> " + days + " days data. Running for " + days + " day(s).\n");
+	displayMsg("SIMULATION: Running day " + currDay + " of " + days, DARK_BLUE);
+	
+
+	
+}
+
+
+private void updateHourlyData(int hr) {
+	// update population and temp data if it has changed, double-check hour
+	
+		population = inPop.get(currDay).get(hr-1);
+		ambientT = inTemp.get(currDay).get(hr-1);
+		distributePopulation();
+		evaluateACsNeeded();
+	
+		rawEnergyDaily += totalKW;        // raw energy increases by totalKW every hour
+		rawEnergy += totalKW;
+		saveRatioDaily = (rawEnergyDaily-manEnergyDaily)/rawEnergyDaily;
+		writeEnergyDataToArray(hr, ambientT, population, rawEnergyDaily, manEnergyDaily, saveRatioDaily, cummulList);
+		
+		
+		
+}
+
+
+private void distributePopulation() {
+	// reset space population data and 
+	// randomly distribute population among the three areas
+	counter.setPopulation(0);
+	lobby.setPopulation(0);
+	customerSP.setPopulation(0);
+	Random rand = new Random();
+	for (int i=0; i < population; i++) {
+		int next = rand.nextInt(3);  //generates 0, 1, or 2.
+		if (next==0) lobby.setPopulation(counter.getPopulation()+1);
+		else if (next==1) counter.setPopulation(lobby.getPopulation()+1);
+		else customerSP.setPopulation(customerSP.getPopulation()+1);
+	}
+	
+}
+
+
+private void evaluateACsNeeded() {
+
+	Space [] spaces = {counter, lobby, customerSP};
+	double eConsumedKj = 0;
+	double eConsumedKjTotal = 0;
+	pLog.append("\n Day " + currDay + " of " + days + ", Hour " + time.hour() + ":");
+	for (Space space : spaces) {
+		
+		// The temperatures to cool to considered
+		float target = controlAC.getMinTemp();
+		
+		// Get population
+		int pop = space.getPopulation();
+		
+		// declare constants
+		double heatPerPerson = 130;  // Watts
+		double density = 1.205;  // kg/m3 -- air density
+		double specificHeat = 1.006; // kJ/kg.K --air specific heat capacity
+								
+		// calc variables
+		double volumeFlowRate = (space.getVolume()* 0.2)/3600;   // m3/s
+		float dT = ambientT - target;
+		double e4cooling = 0;
+		 
+		 // 1. Determine energy e required to cool = energy to cool empty space to minTemp + heat energy from population
+		 double e2coolKj = density*volumeFlowRate*specificHeat*dT + heatPerPerson*pop;               // kJ
+		 
+	     
+		 // 2. Determine the ACs required for cooling based on 1 - either main, back-up or both
+		 double requiredBtuPerHr = e2coolKj * 1.055;				// 1 btu = 1.055kJ
+		 
+		 			
+		 //3. check which AC(s) has this 'power' and start it/them
+		 if (space.getBackupAC().getCapacityBTU() >= requiredBtuPerHr) {
+			space.getBackupAC().setOn(true);
+			e4cooling = space.getBackupAC().getCapacityBTU();
+			pLog.append("\n COOLING " + space.getName() + ": Backup chosen." + " Temp: " + ambientT + ", Pop: " + pop);
+		 }
+		 else if (space.getMainAC().getCapacityBTU() >= requiredBtuPerHr) {
+			 space.getMainAC().setOn(true);
+			 e4cooling = space.getMainAC().getCapacityBTU();
+			 pLog.append("\n COOLING " + space.getName() + ": Main chosen." + " Temp: " + ambientT + ", Pop: " + pop);
+			 
+		 }
+		 else if (space.getTotalBTU() >= requiredBtuPerHr) {
+			 space.getBackupAC().setOn(true);
+			 space.getMainAC().setOn(true);
+			 e4cooling = space.getTotalBTU();
+			 pLog.append("\n COOLING " + space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Pop: " + pop);
+			 // displayMsg(space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Population: " + pop, DARK_BROWN);
+		 }
+		 else {
+			 displayMsg("WARNING: Insufficient AC capacity in: " + space.getName(), DARK_RED);
+			 pLog.append("\n WARNING: Insufficient AC capacity in: " + space.getName());
+			 e4cooling = space.getTotalBTU();
+			 pLog.append(" while COOLING" + ": Required: " + requiredBtuPerHr + ", Available: " + 
+					 e4cooling + ". Temp: " + ambientT + ", Pop: " + pop);
+			 
+			 
+		 }
+		 
+		 // 5. Calculate energy consumed by AC for running for time t, based on the AC capacity
+		 eConsumedKj = (e4cooling/(EER*1000));                // in kWh, energy consumed for this hour by this space
+		 eConsumedKjTotal += eConsumedKj;						// for all spaces for this hour
+		 
+		 
+					 			 
+	}
+	pLog.append("\n");
+	// update cumulative managed energy
+	manEnergyDaily += eConsumedKjTotal;
+	manEnergy += eConsumedKjTotal;
+	
+	double saveRatioHourly = (totalKW - eConsumedKjTotal)/totalKW;
+	// Write hourly data to file
+	writeEnergyDataToArray(time.hour(), ambientT, population, totalKW, eConsumedKjTotal, saveRatioHourly, hourlyList);
+		
+	
+
+		
+}
+
+
+private void startNexDaySimulation() {
+	
+	
+	// Write these values to hourly and cummul Arrays Finally code hour=16
+	writeEnergyDataToArray(16, 0, 0, rawEnergyDaily, manEnergyDaily, saveRatioDaily, hourlyList);
+	writeEnergyDataToArray(16, 0, 0, rawEnergyDaily, manEnergyDaily, saveRatioDaily, cummulList);
+	
+	// update HashMaps
+	outputHourly.put(currDay, hourlyList);
+	outputCummul.put(currDay, cummulList);
+	
+	
+	time = new ControlTimer();
+	time.reset();
+	float speed = cp5.get(RadioButton.class, "simSpeed").getValue();
+	time.setSpeedOfTime(speed);
+	
+	// reset and start over
+	rawEnergyDaily = 0;
+	manEnergyDaily = 0;
+	saveRatioDaily=0;
+	
+	
+	hourlyList = new ArrayList<String>();
+	cummulList = new ArrayList<String>();
+	
+	currDay++;
+	currHour = 0;
+	population = inPop.get(currDay).get(0);
+	ambientT = inTemp.get(currDay).get(0);
+	displayMsg("SIMULATION: Running day " + currDay + " of " + days  + ".", DARK_GREEN);
+	
+}
+
+
+private void displayMsg(String msg, int color) {
+	Textfield errorBox = cp5.get(Textfield.class, "errorMsg");
+	errorBox.setText(msg);
+	errorBox.setColor(color);
+	// pLog.append("\n " + msg);
+		
+	}
 
 	private void stopSimulation() {
 		// stop all code depending on start
@@ -905,281 +1251,113 @@ private void displayMsg(String msg, int color) {
         .setColorForeground(LIGHT_GREEN)
          ;
 		
-		// Close the outfile
+		// Write data to file and Close the outfiles
+		// println(outputHourly);
+		// println(outputCummul);
+		writeAllDataToFile();
 		try {
 			cummul.close();
 			hourly.close();
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
+			
 			e.printStackTrace();
 		}
-		
-	}
-
-
-
-	private void startSimulation() {
-		
-		// Disable applicable controls to prevent in-run modifications
-		//1. close the Radio buttons
-		cp5.get(RadioButton.class, "simSpeed").close();
-		
-		
-		//2. lock all text fields to prevent further entry, in a loop
-		String [] fields = {"counterL", "counterB", "counterH", "lobbyL", "lobbyB", "lobbyH", "cspL", "cspB", "cspH", "minTemp", "maxTemp"};
-		
-		for (String cField: fields)                    	//cField = current field
-		{							
-			// get each field and...lock it!
-			cp5.get(Textfield.class, cField).lock();
-		}
-		
-			
-		// change button label to "Stop"
-		cp5.get(Button.class, "Start").setLabel("Stop")
-		.setColorBackground(DARK_RED)
-         .setColorForeground(LIGHT_RED)
-		;
-		// start simulation: reset time, set simulation speed
-		start = true;
-		time.reset();
-		float speed = cp5.get(RadioButton.class, "simSpeed").getValue();
-		time.setSpeedOfTime(speed);
-		
-		// set current event
-		event = "STARTED";
-		
-		
-		
-	}
-
-
-
-	private boolean objectsInitialized()  {
-		event = "INITIALIZING...";
-		boolean dataFileOK = true;
-		// Initialize temperature and population data from inFile, if not null
-		// returns true is the initialization was successful, false otherwise
-		if (inFile != null) {
-			dataFileOK = fileDataReadOK(inFile);
-			if (!dataFileOK) return false;
-		}
-		
-		// initialize ACController
-		float min = Float.parseFloat(cp5.get(Textfield.class, "minTemp").getText());
-		float max = Float.parseFloat(cp5.get(Textfield.class, "maxTemp").getText());
-		controlAC = new ACController(min, max);
-		
-		// initialize Space Objects
-		double counterL = Double.parseDouble(cp5.get(Textfield.class, "counterL").getText());
-		double counterB = Double.parseDouble(cp5.get(Textfield.class, "counterB").getText());
-		double counterH = Double.parseDouble(cp5.get(Textfield.class, "counterH").getText());
-		counter = new Space(counterL, counterB, counterH, "Counter");
-		
-		double lobbyL = Double.parseDouble(cp5.get(Textfield.class, "lobbyL").getText());
-		double lobbyB = Double.parseDouble(cp5.get(Textfield.class, "lobbyB").getText());
-		double lobbyH = Double.parseDouble(cp5.get(Textfield.class, "lobbyH").getText());
-		lobby = new Space(lobbyL, lobbyB, lobbyH, "Lobby");
-		
-		double cspL = Double.parseDouble(cp5.get(Textfield.class, "cspL").getText());	
-		double cspB = Double.parseDouble(cp5.get(Textfield.class, "cspB").getText());	
-		double cspH = Double.parseDouble(cp5.get(Textfield.class, "cspH").getText());
-		customerSP = new Space (cspL, cspB, cspH, "CustomerSP");
-		
-		// initialize the time
-		time  = new ControlTimer();
-		
-		// Initialize population and temperature data
-		population = inPop.get(0);
-		ambientT = inTemp.get(0);
-		
-		// Default all space temperatures to ambientT
-		counter.getSensor().setTemp(min);
-		lobby.getSensor().setTemp(min);
-		customerSP.getSensor().setTemp(min);
-				
 		// Reset all variables to initial state
-		currHour = 0;
-		rawEnergy = 0;
-		manEnergy = 0;
-		saveRatio = 0;
+		currHour = 0; currDay =1;
+		days = 0;
+		rawEnergy = 0; rawEnergyDaily = 0; 
+		manEnergy = 0; manEnergyDaily = 0;
+		saveRatio = 0; saveRatioDaily = 0;
 		
-		double totalBTU = counter.getTotalBTU()+ customerSP.getTotalBTU()+	lobby.getTotalBTU();
-		totalKW = totalBTU/(EER*1000);
+		hourlyList = new ArrayList<String>();
+		cummulList = new ArrayList<String>();
 		
-		// Initialize output data file
-		try {
-			cummul = new BufferedWriter(new FileWriter(outFileCummul));
-			cummul.write("Hour,RawEnergy,ManagedEnergy"); cummul.newLine();
-			hourly = new BufferedWriter(new FileWriter(outFileHourly));
-			hourly.write("Hour,RawEnergy,ManagedEnergy"); hourly.newLine();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-		
-		
-		
-		return true;
 	}
 
 
 
-	
-
-
-
-	private boolean allInputOK() {
-		boolean ret = true;
-		event = "VALIDATING...";
-		// clear the message box
-		displayMsg("", DARK_RED);
-		// check if simulation speed has been selected:
-		float speed = cp5.get(RadioButton.class, "simSpeed").getValue();
-		if (speed <= 0.0){   												// none selected
-			displayMsg("ERROR: Please choose a simulation speed.", DARK_RED);
-			return false;
-		}
+	private void writeEnergyDataToArray(int hour, float temp, int pop, double rawE, double manE, double savR, List<String> list) {
 		
-		// check if data source has been selected:
-		String path = cp5.get(Textfield.class, "outputFilePath").getText();
-		if (path.equals("")) {
-			displayMsg("ERROR: Please choose a data source.",DARK_RED);
-			return false;
-		}
-		
-		// Now we check all text fields for proper entry, in a loop
-		String [] fields = {"counterL", "counterB", "counterH", "lobbyL", "lobbyB", "lobbyH", "cspL", "cspB", "cspH", "minTemp", "maxTemp"};
-		
-		// get and check the content (text) of each field...
-		for (String cField: fields)                    	//cField = current field
-		{							
-			Textfield field = cp5.get(Textfield.class, cField);
-			float value = 0;
-			
-			// add call callback event to restore background to white on mouse "click" on the fields
-			// ...in case field is flagged and background changed to red
-			field.addCallback(new CallbackListener() {
-			    public void controlEvent(CallbackEvent theEvent) {
-			      if (theEvent.getAction()==ControlP5.ACTION_ENTER) {
-			    	  field.setColorBackground(WHITE);
-			      }
-			    }
-			  }
-			  );
-			
-			// try converting the field to a float value
-			try 
-			{
-				value = Float.parseFloat(field.getText());
-			// if error, then a numeric value was not entered
-			} catch (NumberFormatException e) 
-			{
-				// display warning and set background to red
-				displayMsg("ERROR: Please enter numeric value(s) in the red box(es).", DARK_RED);
-				field.setColorBackground(LIGHT_RED);
-				ret = false;									// we need to return false
-				
-			}
-			// We are not accepting negative values!
-			if (value < 0){
-				displayMsg("ERROR: Please enter positive value(s) in the red box(es).", DARK_RED);
-				field.setColorBackground(LIGHT_RED);
-				ret = false;
-			}
-		}
-		// if any of the field has issues then abort and return false!
-		if (!ret) return false;
-		
-		// Now, we check that min temp <= max temp (by now we are sure the values are numeric)
-		float min = Float.parseFloat(cp5.get(Textfield.class, "minTemp").getText());
-		float max = Float.parseFloat(cp5.get(Textfield.class, "maxTemp").getText());
-		if (min > max) {
-			displayMsg("ERROR: Min temp cannot be greater than max temp.", DARK_RED);
-			return false;
-		}
-		
-		return true;
-	}
-	private boolean fileDataReadOK(File file) {
-		try {
-			BufferedReader buf = new BufferedReader(new FileReader(file));
-			String str, error;
-			String [] splitStr;
-			inTemp = new ArrayList<Float> ();
-			inPop = new ArrayList<Integer> ();
-			for (int loop = 0; loop <= WORKINGHOURS; loop++) {
-				str = buf.readLine();
-				
-				// Header of the CSV file will be read at loop = 0, skip it!
-				if (loop == 0) continue;									
-					
-				splitStr = str.split(",");
-				try {
-					inTemp.add(Float.parseFloat(splitStr[1]));
-				} catch (NumberFormatException e) {
-					error = "ERROR: Invalid temperature data in input file for hour: " + loop;
-					displayMsg(error, DARK_RED);
-					buf.close();
-					return false;
-				}
-				catch (ArrayIndexOutOfBoundsException e) {
-					error = "ERROR: Missing temperature data in input file for hour: " + loop;
-					displayMsg(error, DARK_RED);
-					buf.close();
-					return false;
-				}
-				try {
-					inPop.add(Integer.parseInt(splitStr[2]));
-				} catch (NumberFormatException e) {
-					error = "ERROR: Invalid population data in input file for hour: " + loop;
-					displayMsg(error, DARK_RED);
-					buf.close();
-					return false;
-				}
-				catch (ArrayIndexOutOfBoundsException e) {
-					error = "ERROR: Missing population data in input file for hour: " + loop;
-					displayMsg(error, DARK_RED);
-					buf.close();
-					return false;
-				}
-							
-			}
-			
-			buf.close();
-			// println("Temp: " + inTemp + " Pop: " + inPop);
-		
-			return true;
-		}
-		catch(FileNotFoundException ex) {
-			// file not found
-			String error = "ERROR: File not found!";
-			displayMsg(error, DARK_RED);
-			return false;
-			
-		}
-		catch(IOException ex) {
-			// other I/O error
-			String error = "ERROR: unknown I/O error while reading file!";
-			displayMsg(error, DARK_RED);
-			return false;
-		}
-	}
-	
-	private void writeEnergyDataToFile(int hour, double rawE, double manE, BufferedWriter buff) {
-		String hr = Integer.toString(hour);
+		String hr = Integer.toString(hour+8) + ":00";
+		String tmp = Float.toString(temp);
+		String popu = Integer.toString(pop);
 		String raw = Double.toString(rawE);
 		String man = Double.toString(manE);
-		try {
-			buff.write(hr + "," + raw + "," + man); buff.newLine();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+		String sav = Double.toString(savR);
 		
+		String toWrite = hr + "," + tmp + "," + popu + "," + raw + "," + man + "," + sav;
+		
+		list.add(toWrite);
+			
 	}
 	
+	private void writeAllDataToFile() {
+		
+	// Write the Arrays to Files
+	try {
+		cummul = new BufferedWriter(new FileWriter(outFileCummul));
+		hourly = new BufferedWriter(new FileWriter(outFileHourly));
+		
+		// Write the headings for the files
+		cummul.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); cummul.newLine();
+		hourly.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); hourly.newLine();
+		
+		// Dump the arrays to file
+		for (int day = 1; day <= days; day++) {
+					
+			// Dump the hourly Array to file
+			hourly.write("Day " + day); hourly.newLine();
+			for (String line : outputHourly.get(day)) {
+				hourly.write(line); hourly.newLine();
+			}
+			
+			// Dump the cummul Array to file
+			cummul.write("Day " + day); cummul.newLine();
+			for (String line : outputCummul.get(day)) {
+				cummul.write(line); cummul.newLine();
+			}
+		}
+		// Write Summary data for the hourly file
+		hourly.write("Summary [Average] for the " + days + " days"); hourly.newLine();
+		
+		for (int hour=0; hour < WORKINGHOURS; hour++) {
+			float sumTemp = 0;
+			int sumPop = 0;
+			double sumRawE =0, sumManE=0, sumSavR=0;
+			String hour_s = null;
+			for (int day =1; day <= days; day ++) {
+				List<String> list = outputHourly.get(day);
+				String line = list.get(hour);
+				String[] splt = line.split(",");
+				hour_s = splt[0];
+				float temp = Float.parseFloat(splt[1]);
+				int pop = Integer.parseInt(splt[2]);
+				double rawE = Double.parseDouble(splt[3]);
+				double manE = Double.parseDouble(splt[4]);
+				double savR = Double.parseDouble(splt[5]);
+				sumTemp += temp;
+				sumPop += pop;
+				sumRawE += rawE;
+				sumManE += manE;
+				sumSavR += savR;
+			}
+			hourly.write(hour_s + "," + Float.toString(sumTemp/days) + "," + Integer.toString(sumPop/days) + "," +
+				Double.toString(sumRawE/days) + "," + Double.toString(sumManE/days) + "," + Double.toString(sumSavR/days));
+			hourly.newLine();
+			
+		}
+		
+		// It's a good idea to close files when you are done :)
+		hourly.close();
+		cummul.close();
+	} catch (IOException e) {
+		
+		e.printStackTrace();
+	}
+		
+	}
+
+
 	public static void main (String[] args) {
 		//Add main method for running as application
 		PApplet.main(new String[] {"--present", "bankingHall.BankingHall"});
