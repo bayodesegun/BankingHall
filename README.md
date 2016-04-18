@@ -1,6 +1,6 @@
 # README #
 
-This README would normally document whatever steps are necessary to get your application up and running. This project is 'private' at the moment.
+This README would normally document whatever steps are necessary to get your application up and running. This project is under development at the moment.
 
 ### What is this repository for? ###
 
