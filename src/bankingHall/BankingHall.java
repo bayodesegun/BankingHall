@@ -15,6 +15,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -68,6 +69,8 @@ public class BankingHall extends PApplet implements Runnable {
 	private double saveRatio=0;
 	private double totalKW;
 	
+	private int errors = 0;
+	
 	private double rawEnergyDaily = 0;
 	private double manEnergyDaily = 0;
 	private double saveRatioDaily=0;
@@ -93,7 +96,7 @@ public class BankingHall extends PApplet implements Runnable {
 	private final int WHITE = color(255);
 	private final int BLACK = color(0);
 	
-	private final int EER = 12;						// energy efficiency rating for ACs
+	private final float EER = 8.3f;						// energy efficiency rating for ACs
 	
 	/*Runnable coolCounter = new Runnable() {
 		public void run(){
@@ -141,7 +144,7 @@ public class BankingHall extends PApplet implements Runnable {
 	    
 	    cp5.addTextarea("programLog")
 		   .setPosition(5,5)
-	       .setSize(495,210)
+	       .setSize(890,210)
 	       .setColorBackground(WHITE)
 	       .setColorForeground(WHITE)
 	       .setLineHeight(35)
@@ -537,7 +540,7 @@ public class BankingHall extends PApplet implements Runnable {
 	    	 
 	    	// Read and Write hourly data
 	    	if (hour > 0) {
-	    		if (hour == 8) println("current hour: " + hour);	
+	    		// if (hour == 8) println("current hour: " + hour);	
 	    		if (currHour != hour) {
 	    			currHour = hour;
 	    			updateHourlyData(hour);
@@ -556,6 +559,10 @@ public class BankingHall extends PApplet implements Runnable {
 		    	if (currDay + 1 > days) {
 		    		displayMsg("EVENT: Simulation ended due to end of day " + currDay + " of " + days, DARK_GREEN);
 		    		
+		    		    		
+		    		pLog.append("\nError rate: " + (errors*100)/(3*WORKINGHOURS*days) + " %.");
+		    		
+		    		pLog.append("\nEVENT: Simulation ended due to end of day " + currDay + " of " + days);
 		    		
 		    		
 		    		// Write these values to hourly and daily Arrays Finally code hour = 16
@@ -569,8 +576,9 @@ public class BankingHall extends PApplet implements Runnable {
 		    		outputHourly.put(currDay, hourlyList);
 		    		outputCummul.put(currDay, cummulList);
 		    		
-		    		// Update field and stop
+		    		// Update field, write data to file, and stop
 		    		updateBoundFields();
+		    		writeAllDataToFile();
 		    		stopSimulation();
 		    				
 		    	}
@@ -666,9 +674,9 @@ private void persistEnclosures() {
    rect(500,220,400,288);	//CUST. SERV.
 
    fill(WHITE);
-   text("COUNTER", 410, 115);
-   text("LOBBY", 240, 360);
-   text("CUST SERV", 680, 360);
+   //text("COUNTER", 410, 115);
+   //text("LOBBY", 240, 360);
+   //text("CUST SERV", 680, 360);
 }
 
 
@@ -924,7 +932,7 @@ private boolean objectsInitialized()  {
 	String timeStamp = new SimpleDateFormat("yyyyMMMdd_HHmmss").format(Calendar.getInstance().getTime());  //for unique file names
 	String cummulFile = "\\cummul_" + timeStamp + ".csv";
 	String hourlyFile = "\\hourly_" + timeStamp + ".csv";
-	String logFile = "\\cummul_" + timeStamp + ".log";
+	String logFile = "\\programLog_" + timeStamp + ".log";
 	
 	outFileCummul = new File(inFile.getParent() + cummulFile);
     outFileHourly = new File(inFile.getParent() + hourlyFile);
@@ -1086,16 +1094,20 @@ private void updateHourlyData(int hr) {
 
 private void distributePopulation() {
 	// reset space population data and 
-	// randomly distribute population among the three areas
-	counter.setPopulation(0);
-	lobby.setPopulation(0);
-	customerSP.setPopulation(0);
+	// assign half the population to Counter and
+	// randomly distribute the remainder btw Lobby and CSP
+	int halfPop = population/2;
+	counter.setPopulation(halfPop + 11);
+	
+	lobby.setPopulation(2);
+	customerSP.setPopulation(6);
+	
 	Random rand = new Random();
-	for (int i=0; i < population; i++) {
-		int next = rand.nextInt(3);  //generates 0, 1, or 2.
-		if (next==0) lobby.setPopulation(counter.getPopulation()+1);
-		else if (next==1) counter.setPopulation(lobby.getPopulation()+1);
-		else customerSP.setPopulation(customerSP.getPopulation()+1);
+	for (int i=0; i < population - halfPop; i++) {
+		int next = rand.nextInt(2);  //generates 0 or 1
+		if (next==0) customerSP.setPopulation(customerSP.getPopulation()+1);
+		else if (next==1) lobby.setPopulation(lobby.getPopulation()+1);
+		
 	}
 	
 }
@@ -1106,7 +1118,8 @@ private void evaluateACsNeeded() {
 	Space [] spaces = {counter, lobby, customerSP};
 	double eConsumedKj = 0;
 	double eConsumedKjTotal = 0;
-	pLog.append("\n Day " + currDay + " of " + days + ", Hour " + time.hour() + ":");
+	pLog.append("\nDay " + currDay + " of " + days + ", Hour " + time.hour() + ":");
+	DecimalFormat df = new DecimalFormat("#.00"); 
 	for (Space space : spaces) {
 		
 		// The temperatures to cool to considered
@@ -1116,48 +1129,52 @@ private void evaluateACsNeeded() {
 		int pop = space.getPopulation();
 		
 		// declare constants
-		double heatPerPerson = 130;  // Watts
+		double heatPerPerson = 450;  // BTU/hr
 		double density = 1.205;  // kg/m3 -- air density
 		double specificHeat = 1.006; // kJ/kg.K --air specific heat capacity
 								
 		// calc variables
-		double volumeFlowRate = (space.getVolume()* 0.2)/3600;   // m3/s
+		double volumeFlowRate = (space.getVolume()* 0.2);   // m3/hr
 		float dT = ambientT - target;
 		double e4cooling = 0;
 		 
-		 // 1. Determine energy e required to cool = energy to cool empty space to minTemp + heat energy from population
-		 double e2coolKj = density*volumeFlowRate*specificHeat*dT + heatPerPerson*pop;               // kJ
+		 // 1. Determine energy e required to cool empty space to minTemp
+		 double e2coolKj = density*volumeFlowRate*specificHeat*dT;               // kJ/hr
 		 
 	     
-		 // 2. Determine the ACs required for cooling based on 1 - either main, back-up or both
-		 double requiredBtuPerHr = e2coolKj * 1.055;				// 1 btu = 1.055kJ
+		 //2.  Convert e2coolKj to BTU/Hr and Add heat energy from population
+		 double requiredBtuPerHr = e2coolKj * 1.055 + heatPerPerson*pop;				// 1 btu = 1.055kJ
 		 
-		 			
-		 //3. check which AC(s) has this 'power' and start it/them
+		 //3. Determine the ACs required for cooling based on 1 - either main, back-up or both			
+		 //... check which AC(s) has this 'power' and start it/them
+		 pLog.append("\nCOOLING " + space.getName() + "... Required = " + df.format(requiredBtuPerHr) 
+		 		 + ". Backup = " + df.format(space.getBackupAC().getCapacityBTU()) 
+		 		 +  ". Main = " + df.format(space.getMainAC().getCapacityBTU()) 
+				 + ". Both = " + df.format(space.getTotalBTU())
+				 + " Temp: " + ambientT + ", Pop: " + pop);
 		 if (space.getBackupAC().getCapacityBTU() >= requiredBtuPerHr) {
 			space.getBackupAC().setOn(true);
 			e4cooling = space.getBackupAC().getCapacityBTU();
-			pLog.append("\n COOLING " + space.getName() + ": Backup chosen." + " Temp: " + ambientT + ", Pop: " + pop);
+			pLog.append("... Backup chosen.");
 		 }
 		 else if (space.getMainAC().getCapacityBTU() >= requiredBtuPerHr) {
 			 space.getMainAC().setOn(true);
 			 e4cooling = space.getMainAC().getCapacityBTU();
-			 pLog.append("\n COOLING " + space.getName() + ": Main chosen." + " Temp: " + ambientT + ", Pop: " + pop);
+			 pLog.append("... Main chosen." );
 			 
 		 }
 		 else if (space.getTotalBTU() >= requiredBtuPerHr) {
 			 space.getBackupAC().setOn(true);
 			 space.getMainAC().setOn(true);
 			 e4cooling = space.getTotalBTU();
-			 pLog.append("\n COOLING " + space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Pop: " + pop);
-			 // displayMsg(space.getName() + ": Both chosen." + " Temp: " + ambientT + ", Population: " + pop, DARK_BROWN);
+			 pLog.append("... Both chosen.");
+			 
 		 }
 		 else {
-			 displayMsg("WARNING: Insufficient AC capacity in: " + space.getName(), DARK_RED);
-			 pLog.append("\n WARNING: Insufficient AC capacity in: " + space.getName());
+			 displayMsg("WARNING: Insufficient AC capacity in " + space.getName(), DARK_RED);
+			 pLog.append("\nSEVERE: Insufficient AC capacity in " + space.getName() + "...Both chosen.");
 			 e4cooling = space.getTotalBTU();
-			 pLog.append(" while COOLING" + ": Required: " + requiredBtuPerHr + ", Available: " + 
-					 e4cooling + ". Temp: " + ambientT + ", Pop: " + pop);
+			 errors++;
 			 
 			 
 		 }
@@ -1254,17 +1271,11 @@ private void displayMsg(String msg, int color) {
 		// Write data to file and Close the outfiles
 		// println(outputHourly);
 		// println(outputCummul);
-		writeAllDataToFile();
-		try {
-			cummul.close();
-			hourly.close();
-		} catch (IOException e) {
-			
-			e.printStackTrace();
-		}
+		
+		
 		// Reset all variables to initial state
 		currHour = 0; currDay =1;
-		days = 0;
+		days = 0; errors = 0;
 		rawEnergy = 0; rawEnergyDaily = 0; 
 		manEnergy = 0; manEnergyDaily = 0;
 		saveRatio = 0; saveRatioDaily = 0;
@@ -1281,9 +1292,9 @@ private void displayMsg(String msg, int color) {
 		String hr = Integer.toString(hour+8) + ":00";
 		String tmp = Float.toString(temp);
 		String popu = Integer.toString(pop);
-		String raw = Double.toString(rawE);
-		String man = Double.toString(manE);
-		String sav = Double.toString(savR);
+		String raw = String.format("%.4f", rawE);
+		String man = String.format("%.4f", manE);
+		String sav = String.format("%.4f", savR);
 		
 		String toWrite = hr + "," + tmp + "," + popu + "," + raw + "," + man + "," + sav;
 		
@@ -1297,22 +1308,31 @@ private void displayMsg(String msg, int color) {
 	try {
 		cummul = new BufferedWriter(new FileWriter(outFileCummul));
 		hourly = new BufferedWriter(new FileWriter(outFileHourly));
-		
-		// Write the headings for the files
-		cummul.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); cummul.newLine();
-		hourly.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); hourly.newLine();
-		
+		log = new BufferedWriter(new FileWriter(outFileLog));
+				
 		// Dump the arrays to file
 		for (int day = 1; day <= days; day++) {
 					
 			// Dump the hourly Array to file
+			// Day indicator
 			hourly.write("Day " + day); hourly.newLine();
+			
+			// Heading
+			hourly.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); hourly.newLine();
+			
+			// Data
 			for (String line : outputHourly.get(day)) {
 				hourly.write(line); hourly.newLine();
 			}
 			
 			// Dump the cummul Array to file
+			// Day indicator
 			cummul.write("Day " + day); cummul.newLine();
+			
+			// Heading
+			cummul.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); cummul.newLine();
+			
+			// Data
 			for (String line : outputCummul.get(day)) {
 				cummul.write(line); cummul.newLine();
 			}
@@ -1320,6 +1340,10 @@ private void displayMsg(String msg, int color) {
 		// Write Summary data for the hourly file
 		hourly.write("Summary [Average] for the " + days + " days"); hourly.newLine();
 		
+		// heading
+		hourly.write("Hour,Temperature,Population,RawEnergy,ManagedEnergy,SaveRatio"); hourly.newLine();
+		
+		// Data
 		for (int hour=0; hour < WORKINGHOURS; hour++) {
 			float sumTemp = 0;
 			int sumPop = 0;
@@ -1346,10 +1370,13 @@ private void displayMsg(String msg, int color) {
 			hourly.newLine();
 			
 		}
+		// write all logs to log file
+		log.write(pLog.getText());
 		
 		// It's a good idea to close files when you are done :)
 		hourly.close();
 		cummul.close();
+		log.close();
 	} catch (IOException e) {
 		
 		e.printStackTrace();
