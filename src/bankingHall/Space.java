@@ -42,13 +42,13 @@ public class Space {
 		// Reference for BTU calculation based on space dimension and expected population: {insert reference}
 		
 		double btuPerPerson = 450;   						// BTU/hr
-		double numberOfPeople = this.getArea()*0.2;  		// each person occupying 1m2, at 20% space capacity utilization
+		double numberOfPeople = this.getArea();  		// each person occupying 1m2, at 100% space capacity utilization
 		
 		totalBTU = this.getVolume()*6 + btuPerPerson*numberOfPeople;
 		
-		// split the capacity btw main and backUp, at 60:40
-		mainAC = new CoolingUnit(0.6*totalBTU);
-		backupAC = new CoolingUnit(0.4*totalBTU);
+		// split the capacity btw main and backUp, at 65:35
+		mainAC = new CoolingUnit(0.65*totalBTU);
+		backupAC = new CoolingUnit(0.35*totalBTU);
 	}
 
 	public double getArea() {
